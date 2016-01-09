@@ -1,0 +1,348 @@
+Wine Quality: Regression Models
+========================================================
+author: Adena Lin
+date: November 18, 2015
+
+Introduction
+========================================================
+
+Dataset from http://archive.ics.uci.edu/ml/datasets/Wine+Quality.
+```{r}
+library(caret)
+# Load in data
+redwine <- read.csv2("~/Documents/Current Courses/PSYCH 486/Wine/winequality-red.csv")
+whitewine <- read.csv2("~/Documents/Current Courses/PSYCH 486/Wine/winequality-white.csv")
+```
+
+I used 2 methods of selecting predictors:<p>
+**(1)** Manual selection based on correlations<br>
+**(2)** Automatic feature selection
+
+Manually selecting predictors: Red Wine
+========================================================
+
+```{r, echo=FALSE}
+redwine$chlorides <- as.numeric(as.character(redwine$chlorides))
+```
+
+```{r}
+# Center, scale, and transform red wine data
+preprocess_redwine <- preProcess(redwine[,1:11], c("BoxCox", "center", "scale"))
+new_redwine <- data.frame(trans = predict(preprocess_redwine, redwine))
+```
+
+**Box Cox Transformation**<br>
+<big>Y^λ</big>where <b>Y</b> would be the values in the dataset and <b>λ</b> would be the exponent (ranges from -5 to 5).<p>
+<b>Examples</b><br>
+If λ = 2, all the values would be squared.<br>
+If λ = 0.5, the square root of the values would be taken.<br>
+If λ = 0, the log of the values would be taken.
+
+Checking for normal distribution: example
+========================================================
+<p align="right">Chlorides: pre-transformation</align><br>
+```{r, echo=FALSE, fig.align="right"}
+hist(redwine$chlorides)
+```
+***
+<br>Post-transformation<br>
+```{r, echo=FALSE}
+hist(new_redwine$trans.chlorides)
+```
+
+Checking for outliers
+========================================================
+
+Using boxplots to check for outliers<br>
+```{r, eval=FALSE}
+boxplot(new_redwine$trans.fixed.acidity) 
+boxplot(new_redwine$trans.volatile.acidity)
+boxplot(new_redwine$trans.citric.acid)
+boxplot(new_redwine$trans.residual.sugar)
+boxplot(new_redwine$trans.chlorides)
+boxplot(new_redwine$trans.free.sulfur.dioxide)
+boxplot(new_redwine$trans.total.sulfur.dioxide) # no outliers
+boxplot(new_redwine$trans.density)
+boxplot(new_redwine$trans.pH)
+boxplot(new_redwine$trans.sulphates)
+boxplot(new_redwine$trans.alcohol) # no outliers
+```
+
+Removing outliers
+========================================================
+After scaling, centering and transforming data, we remove outliers outside of 3 SDs
+```{r, eval=FALSE}
+new_redwine <- new_redwine[!abs(new_redwine$trans.fixed.acidity) > 3,]
+```
+This would be done for all predictors with outliers.
+
+Finding predictor correlations
+========================================================
+```{r, eval=FALSE}
+# Find correlations between predictors and quality
+library(corrplot)
+corrplot(cor(new_redwine), type = "lower", method = "number")
+```
+(Top 5) Predictors with highest correlations with quality: 
+- volatile acidity
+- citric acid
+- total sulfur dioxide
+- sulphates
+- alcohol
+
+Manually selecting predictors: White Wine
+========================================================
+
+Same steps would be repeated to find predictors for white wine, which will be
+- volatile.acidity
+- density
+- total.sulfur.dioxide
+- chlorides
+- alcohol
+
+Testing for collinearity
+========================================================
+```{r, eval=FALSE}
+redCollinear <- lm(quality ~ ., data = redwine)
+vif(redCollinear)
+# No VIF > 10 for red wine, no variables highly correlated
+whiteCollinear <- lm(quality ~., data = whitewine)
+vif(whiteCollinear)
+corrplot(cor(whitewine), method = "number")
+# For variables of interest, alcohol and density have very high VIFs
+```
+For White Wine, alcohol and density were highly correlated (~0.80).<br> 
+As alcohol had higher average correlations to the rest of the variables, it was <u>removed</u> as a variable for white wine.
+
+Create new datasets for red & white wines
+========================================================
+```{r, eval=FALSE}
+# Create new data frame with variables of interest for red wine and white wine
+redwData <- data.frame(new_redwine$trans.volatile.acidity, new_redwine$trans.citric.acid, new_redwine$trans.chlorides, new_redwine$trans.total.sulfur.dioxide, new_redwine$trans.alcohol, new_redwine$trans.quality)
+whitewData <- data.frame(new_whitewine$trans.volatile.acidity, new_whitewine$trans.chlorides, new_whitewine$trans.total.sulfur.dioxide, new_whitewine$trans.density, new_whitewine$trans.quality)
+```
+
+Create train & test sets
+========================================================
+```{r, eval=FALSE}
+# 75/25 train/test split
+# RED WINE
+set.seed(1)
+redSplit <- createDataPartition(redwData$quality,
+                                p = 0.75,
+                                list = FALSE)
+redTrain <- redwData[redSplit,]
+redTest  <- redwData[-redSplit,]
+# WHITE WINE
+whiteSplit <- createDataPartition(whitewData$quality, 
+                                  p = 0.75,
+                                  list = FALSE)
+whiteTrain <- whitewData[whiteSplit,]
+whiteTest  <- whitewData[-whiteSplit,]
+```
+
+Setting resampling parameters
+========================================================
+Using K-fold cross validation with 10 folds resampled 10 times.
+```{r, eval=FALSE}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 10)
+```
+
+The next few slides will go over the following regression models
+- **K Nearest Neighbors** (tuned using number of neighbors 'k')
+- **Neural Networks** (tuned with # hidden layers & decay values)
+- **Support Vector Machines** (tuned using cost)
+
+...for red wine, although white wine models will be built the same way using different predictors.
+
+KNN: Red Wine
+========================================================
+```{r, eval=FALSE}
+# Train red wine KNN model
+set.seed(2)
+redKnn1 <- train(quality ~.,
+                data = redTrain,
+                method = "knn",
+                tuneGrid = data.frame(.k = 1:30),
+                trControl = fitControl)
+# Test KNN model on red wine test data
+redw_knnPredictions1 <- predict(redKnn1, newdata = redTest)
+r2_redw_knn1 <- R2(redw_knnPredictions1, redTest$quality)
+rmse_redw_knn1 <- RMSE(redw_knnPredictions1, redTest$quality)
+```
+**R2 = 0.3099295, RMSE = 0.6752208**
+
+Neural Networks: Red Wine
+========================================================
+```{r, eval=FALSE}
+# Train red wine neural networks model
+set.seed(4)
+redNN_1 <- train(quality ~., data = redTrain, method = "nnet", linout = TRUE, maxit = 100, tuneGrid = expand.grid(.size=c(1:5), .decay=c(0,0.001,0.01,0.1)), trControl = fitControl)
+# Test model
+redw_NNPredictions1 <- predict(redNN_1, newdata = redTest)
+r2_redw_nn1 <- R2(redw_NNPredictions1, redTest$quality)
+rmse_redw_nn1 <- RMSE(redw_NNPredictions1, redTest$quality)
+```
+**R2 = 0.3169731, RMSE = 0.6714897**
+
+SVM: Red Wine
+========================================================
+```{r, eval=FALSE}
+# Train
+set.seed(7)
+redSVM_1 <- train(quality ~.,
+                  data = redTrain,
+                method = "svmRadial", 
+                tuneLength = 5,
+                trControl = fitControl)
+# Test
+redw_SVMPredictions1 <- predict(redSVM_1, newdata = redTest)
+r2_redw_svm1 <- R2(redw_SVMPredictions1, redTest$quality)
+rmse_redw_svm1 <- RMSE(redw_SVMPredictions1, redTest$quality)
+```
+**R2 = 0.3214969, RMSE = 0.6716413**
+
+White Wine Results
+========================================================
+KNN
+- R2: 0.2555832
+- RMSE: 0.7606267
+
+NN
+- R2: 0.2649671
+- RMSE: 0.7569132
+
+SVM
+- R2: 0.2665353
+- RMSE: 0.7577331
+
+Automatic feature selection
+========================================================
+```{r, eval=FALSE}
+ctrl <- rfeControl(method = "repeatedcv",
+                   repeats = 5,
+                   verbose = TRUE,
+                   functions = lmFuncs)
+```
+```{r, eval=FALSE}
+redwineRFE <- rfe(x = new_redwine[,1:11],
+                  y = new_redwine[,12],
+                  sizes = c(1:11),
+                  metric = "RMSE",
+                  rfeControl = ctrl)
+whitewineRFE <- rfe(x = new_whitewine[,1:11],
+                  y = new_whitewine[,12],
+                  sizes = c(1:11),
+                  metric = "RMSE",
+                  rfeControl = ctrl)
+```
+
+========================================================
+**Red Wine Results** from Feature Selection
+- alcohol
+- volatile.acidity
+- sulphates
+- total.sulfur.dioxide
+- density
+
+**White Wine Results**
+- volatile.acidity
+- residual.sugar
+- density
+- alcohol
+- free.sulfur.dioxide
+
+Create new datasets for red & white wines
+========================================================
+5 new predictors for each wine
+```{r, eval=FALSE}
+redw_fs <- data.frame(new_redwine$trans.volatile.acidity, new_redwine$trans.total.sulfur.dioxide, new_redwine$trans.density, new_redwine$trans.sulphates, new_redwine$trans.alcohol, new_redwine$trans.quality)
+whitew_fs <- data.frame(new_whitewine$trans.volatile.acidity, new_whitewine$trans.residual.sugar, new_whitewine$trans.free.sulfur.dioxide, new_whitewine$trans.density, new_whitewine$trans.alcohol, new_whitewine$trans.quality)
+```
+
+Split into train & test sets
+========================================================
+```{r, eval=FALSE}
+# RED WINE
+redSplit <- createDataPartition(redw_fs$quality, p = 0.75, list = FALSE)
+redTrain <- redw_fs[redSplit,]
+redTest  <- redw_fs[-redSplit,]
+# WHITE WINE
+whiteSplit <- createDataPartition(whitew_fs$quality, p = 0.75, list = FALSE)
+whiteTrain <- whitew_fs[whiteSplit,]
+whiteTest  <- whitew_fs[-whiteSplit,]
+```
+& then run through KNN, NN, and SVM models (similar to before with manual feature selection) with their respective 5 variables.
+
+Red Wine Results
+========================================================
+KNN
+- R2: 0.3427743
+- RMSE: 0.6700186
+
+NN
+- R2: 0.3659472
+- RMSE: 0.6572628
+
+SVM
+- R2: 0.3481206
+- RMSE: 0.6658269
+
+
+White Wine Results
+========================================================
+
+KNN
+- R2: 0.3146059
+- RMSE: 0.7399631
+
+NN
+- R2: 0.2961231
+- RMSE: 0.7476727
+
+SVM
+- R2: 0.3059541
+- RMSE: 0.7443625
+
+Graphical Summary
+========================================================
+<br>
+```{r plot, echo=FALSE, fig.align="right"}
+R2graph_redwine_1 <- c(0.3099295, 0.3169731, 0.3214969)
+R2graph_redwine_2 <- c(0.3427743, 0.3659472, 0.3481206)
+R2graph_whitewine_1 <- c(0.2555832, 0.2649671, 0.2665353)
+R2graph_whitewine_2 <- c(0.3146059, 0.2961231, 0.3059541)
+
+RMSEgraph_redwine_1 <- c(0.6752208, 0.6714897, 0.6716413)
+RMSEgraph_redwine_2 <- c(0.6700186, 0.6572628, 0.6658269)
+RMSEgraph_whitewine_1 <- c(0.7606267, 0.7569132, 0.7577331)
+RMSEgraph_whitewine_2 <- c(0.7399631, 0.7476727, 0.7443625)
+
+plot(R2graph_redwine_1, type="o", col="red", xlim=c(0,3.5),ylim=c(0,0.8), ylab="R^2", xaxt = "n", xlab="Model Type", main = "Accuracy Measurement - R Squared")
+axis(1, at = 1:3, labels=c("KNN","NN","SVM"))
+lines(R2graph_redwine_2,type="o", col="pink")
+lines(R2graph_whitewine_1, type="o", col="blue")
+lines(R2graph_whitewine_2, type="o", col="lightblue")
+legend('topright', c("Red Wine - Manual","Red Wine - Automatic","White Wine - Manual", "White Wine - Automatic"), col = c("red","pink","blue","lightblue"), lty=1)
+```
+***
+<p>
+```{r, echo=FALSE}
+plot(RMSEgraph_redwine_1, type="o", col="red", xlim=c(0,3.5),ylim=c(0,1), ylab="RMSE", xaxt = "n", xlab="Model Type", main = "Accuracy Measurement - RMSE")
+axis(1, at = 1:3, labels=c("KNN","NN","SVM"))
+lines(RMSEgraph_redwine_2,type="o", col="pink")
+lines(RMSEgraph_whitewine_1, type="o", col="blue")
+lines(RMSEgraph_whitewine_2, type="o", col="lightblue")
+legend('bottomright', c("Red Wine - Manual","Red Wine - Automatic","White Wine - Manual", "White Wine - Automatic"), col = c("red","pink","blue","lightblue"), lty=1)
+```
+
+Conclusions
+========================================================
+
+**(1)** Automatic feature selection models performed better. 
+
+**(2)** Red wine models overall performed better than white wine models.
+
+**(3)** Performance of model types (KNN vs. NN vs. SVM) were relatively similar overall.
